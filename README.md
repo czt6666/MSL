@@ -5,6 +5,12 @@
 This is the PyTorch implementation for our SIGIR 2025 paper. 
 > Bohao Wang, Feng Liu, Jiawei Chen, Xingyu Lou, Changwang Zhang, Jun Wang, Yuegang Sun, Yan Feng, Chun Chen, Can Wang 2025. MSL: Not All Tokens Are What You Need for Tuning LLM as a Recommender. [arXiv link](https://arxiv.org/abs/2504.04178v1)
 
+## Environment
+- torch==2.6.0
+- transformers==4.49.0
+- marisa-trie==1.2.1
+- [genre](git+https://github.com/facebookresearch/GENRE.git@main)
+
 ## Dataset
 We follow the sliding window data processing method used in [BIGRec](https://arxiv.org/abs/2308.08434). In the paper, for LLM-based recommendation, we sample 10,000 training instances (train_10000.csv) due to limitations in computational resources, while for traditional recommendation models, we use the full dataset (train.csv).
 
@@ -25,7 +31,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 accelerate launch train_trie_token_adatau.p
 ```
 
 ## Inference
-Replace `lora_weights_path` with the path to the model checkpoint, for example: `./save_lora_model/Toy/sample10000_epoch10_CT_tau4.5/0/checkpoint-79`. We perform inference using the checkpoint generated at each epoch.
+Replace `lora_weights_path` with the path to the model checkpoint, for example: `./save_lora_model/Toy/sample10000_epoch10_CT_tau4.5/0/checkpoint-79`. We test the checkpoint from each epoch and report the result with the highest NDCG@5.
 ```
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 accelerate launch inference.py --lora_weights_path "xxx" --dataset Toy
 ```

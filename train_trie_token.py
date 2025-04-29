@@ -232,7 +232,7 @@ def train(
 
     sep = tokenizer.encode("### Response:\n")[1:]  # [14711, 6075, 512]
     titles_list = list(id2title_dict.values())
-    tokens_list = [tokenizer.encode(f'"{title}"')[1:] + [128001] for title in titles_list]
+    tokens_list = [tokenizer.encode(f'"{title}"')[1:] + [tokenizer.eos_token_id] for title in titles_list]
     trie = Trie()
     for tokens in tokens_list:
         trie.insert(tokens)
