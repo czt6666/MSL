@@ -79,7 +79,7 @@ def main(
     num_sample = test_sample
     result_json_data = f"predict_{dataset}_{num_sample}_CBS" if constraint_BS else f"predict_{dataset}_{num_sample}_BS"
     result_json_data = os.path.join(lora_weights_path, result_json_data + ".json")
-    
+
     if os.path.exists(result_json_data):
         accelerator.print(f"The {result_json_data} has existed.")
         return
@@ -101,9 +101,11 @@ def main(
     model = torch.compile(model, mode="reduce-overhead", fullgraph=True)
     model.eval()
 
-    sep = tokenizer.encode("### Response:\n")[1:]  # [14711, 6075, 512]
+    sep = tokenizer.encode("### Response:\n", add_special_tokens=False)  # [14711, 6075, 512]
     titles_list = list(id2title_dict.values())
-    tokens_list = [tokenizer.encode("### Response:\n" + f'"{title}"')[1:] for title in titles_list]
+    tokens_list = [
+        tokenizer.encode(f'"{title}"', add_special_tokens=False) + [tokenizer.eos_token_id] for title in titles_list
+    ]
     trie = MarisaTrie(tokens_list)
 
     def prefix_allowed_tokens_fn(batch_id: int, input_ids: torch.Tensor) -> list:
@@ -118,10 +120,9 @@ def main(
 
         return allowed_tokens
 
-
     def evaluate(instructions, inputs, num_beams=num_beams, max_new_tokens=128):
         prompt = [generate_prompt(instruction, input) for instruction, input in zip(instructions, inputs)]
-        inputs = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True).to(accelerator.device)
+        inputs = tokenizer(prompt, return_tensors="pt", padding=True).to(accelerator.device)
 
         with torch.no_grad():
             generation_config = GenerationConfig(
@@ -138,7 +139,7 @@ def main(
                 generation_config=generation_config,
                 prefix_allowed_tokens_fn=prefix_allowed_tokens_fn if constraint_BS else None,
             )
-        
+
             sequences_scores = generation_output.sequences_scores.tolist()
             sequences_scores = [
                 sequences_scores[i * num_beams : (i + 1) * num_beams] for i in range(len(sequences_scores) // num_beams)

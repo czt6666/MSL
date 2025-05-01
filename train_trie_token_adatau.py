@@ -60,16 +60,7 @@ def generate_list_from_csv(train_data_path, id2title_dict, instuction_str, input
 
 
 class CustomTrainer(transformers.Trainer):
-    def __init__(
-        self,
-        *args,
-        tau,
-        eta,
-        warm_up,
-        first_valid_token_num,
-        alpha,
-        **kwargs,
-    ):
+    def __init__(self, *args, tau, eta, warm_up, first_valid_token_num, alpha, **kwargs):
         super().__init__(*args, **kwargs)
         self.eta = eta
         self.tau = tau
@@ -216,7 +207,6 @@ def train(
     batch_size: int = 128,
     num_epochs: int = 10,
     learning_rate: float = 1e-4,
-    cutoff_len: int = 512,
     # lora hyperparams
     lora_r: int = 8,
     lora_alpha: int = 16,
@@ -291,27 +281,19 @@ def train(
     )
     model = get_peft_model(model, config)
 
-    sep = tokenizer.encode("### Response:\n")[1:]  # [14711, 6075, 512]
+    sep = tokenizer.encode("### Response:\n", add_special_tokens=False)  # [14711, 6075, 512]
     titles_list = list(id2title_dict.values())
-    tokens_list = [tokenizer.encode(f'"{title}"')[1:] + [tokenizer.eos_token_id] for title in titles_list]
+    tokens_list = [
+        tokenizer.encode(f'"{title}"', add_special_tokens=False) + [tokenizer.eos_token_id] for title in titles_list
+    ]
     trie = Trie()
     for tokens in tokens_list:
         trie.insert(tokens)
     vocab_size = len(tokenizer)
 
     def tokenize(prompt, add_eos_token=True):
-        result = tokenizer(
-            prompt,
-            truncation=True,
-            max_length=cutoff_len,
-            padding=False,
-            return_tensors=None,
-        )
-        if (
-            result["input_ids"][-1] != tokenizer.eos_token_id
-            and len(result["input_ids"]) < cutoff_len
-            and add_eos_token
-        ):
+        result = tokenizer(prompt, padding=False, return_tensors=None)
+        if result["input_ids"][-1] != tokenizer.eos_token_id and add_eos_token:
             result["input_ids"].append(tokenizer.eos_token_id)
             result["attention_mask"].append(1)
 

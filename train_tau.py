@@ -106,7 +106,6 @@ def train(
     batch_size: int = 128,
     num_epochs: int = 20,
     learning_rate: float = 1e-4,
-    cutoff_len: int = 512,
     # lora hyperparams
     lora_r: int = 8,
     lora_alpha: int = 16,
@@ -158,7 +157,6 @@ def train(
     micro_batch_size = batch_size // world_size
     gradient_accumulation_steps = batch_size // micro_batch_size // world_size
 
-    """加载了预训练的模型和对应的分词器"""
     bnb_config = BitsAndBytesConfig(load_in_8bit=True)
     model = AutoModelForCausalLM.from_pretrained(
         base_model,
@@ -184,18 +182,8 @@ def train(
     model = get_peft_model(model, config)
 
     def tokenize(prompt, add_eos_token=True):
-        result = tokenizer(
-            prompt,
-            truncation=True,
-            max_length=cutoff_len,
-            padding=False,
-            return_tensors=None,
-        )
-        if (
-            result["input_ids"][-1] != tokenizer.eos_token_id
-            and len(result["input_ids"]) < cutoff_len
-            and add_eos_token
-        ):
+        result = tokenizer(prompt, padding=False, return_tensors=None)
+        if result["input_ids"][-1] != tokenizer.eos_token_id and add_eos_token:
             result["input_ids"].append(tokenizer.eos_token_id)
             result["attention_mask"].append(1)
 
