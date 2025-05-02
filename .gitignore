@@ -1,1 +1,6 @@
 /__pycache__
+save_lora_model/Amazon_Books/sample10000_epoch10_tau1/0/adapter_model.safetensors
+/save_lora_model
+/save_lora_model_tau
+run.sh
+inf_eval.sh

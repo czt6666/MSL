@@ -1,15 +1,22 @@
 import ast
 import json
 import os
+import pdb
+import random
+import re
+import time
 from typing import List, Optional
 
 import fire
+import numpy as np
 import pandas as pd
 import torch
+from tqdm import tqdm
 import transformers
 from accelerate import Accelerator
 
-from datasets import Dataset
+from torch.nn import CrossEntropyLoss
+from torch.utils.data import Dataset
 
 from peft import (
     LoraConfig,
@@ -23,6 +30,10 @@ from transformers import (
     DataCollatorForSeq2Seq,
 )
 
+from Trie import Trie
+import torch.nn.functional as F
+import copy
+from torch.nn.utils.rnn import pad_sequence
 from utils import get_prompt
 
 
@@ -54,10 +65,9 @@ def generate_list_from_csv(train_data_path, id2title_dict, instuction_str, input
 
 
 class CustomTrainer(transformers.Trainer):
-    def __init__(self, *args, tau=1, loss_type=0, **kwargs):
+    def __init__(self, *args, tau=1, **kwargs):
         super().__init__(*args, **kwargs)
         self.tau = tau
-        # self.loss_type = loss_type
 
     def save_model(self, output_dir: Optional[str] = None, _internal_call: bool = False):
         output_dir = output_dir if output_dir is not None else self.args.output_dir
@@ -67,34 +77,71 @@ class CustomTrainer(transformers.Trainer):
         torch.save(self.args, os.path.join(output_dir, "training_args.bin"))
 
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+        constrain_mask = inputs.pop("constrain_mask")
+
         labels = inputs["labels"]
         outputs = model(**inputs)
         logits = outputs.logits
 
+        logits = logits[:, -constrain_mask.size(1) - 1 :, :]
+        labels = labels[:, -constrain_mask.size(1) - 1 :]
+
         loss = None
         # Shift so that tokens < n predict n
         shift_logits = logits[..., :-1, :].contiguous()
+        shift_constrain_mask = constrain_mask.contiguous()
         shift_labels = labels[..., 1:].contiguous()
 
+        shift_logits[shift_constrain_mask == 0] = -float("inf")
+
         # Flatten the tokens
+        loss_fct = CrossEntropyLoss(reduction="none")
         shift_logits = shift_logits.view(-1, self.model.config.vocab_size)
+        shift_constrain_mask = shift_constrain_mask.view(-1, self.model.config.vocab_size)
         shift_labels = shift_labels.view(-1)
         # Enable model parallelism
         shift_labels = shift_labels.to(shift_logits.device)
 
         mask = shift_labels != -100
+
         shift_labels = shift_labels[mask]
         shift_logits = shift_logits[mask]
+        shift_constrain_mask = shift_constrain_mask[mask]
 
-        pos_logits = torch.exp(shift_logits.gather(1, shift_labels.unsqueeze(1)).squeeze(1) / self.tau)
-        pos_loss = -torch.log(pos_logits)
-
+        """Trie+SSM损失"""
+        pos_logits = shift_logits.gather(1, shift_labels.unsqueeze(1)).squeeze(1)
+        pos_loss = -pos_logits / self.tau
         neg_logits = torch.exp(shift_logits / self.tau)
         neg_loss = torch.log(neg_logits.sum(dim=-1))
-
         loss = (pos_loss + neg_loss).mean()
 
         return (loss, outputs) if return_outputs else loss
+
+
+class CustomDataCollatorForSeq2Seq(DataCollatorForSeq2Seq):
+    def __call__(self, features):
+        features_copy = copy.deepcopy(features)
+
+        constrain_mask_values = [feature["constrain_mask"] for feature in features_copy]
+        for feature in features_copy:
+            feature.pop("constrain_mask")
+        batch = super().__call__(features_copy)
+        batch["constrain_mask"] = pad_sequence(
+            constrain_mask_values, batch_first=True, padding_value=1, padding_side="left"
+        )
+
+        return batch
+
+
+class Prompt_dataset(Dataset):
+    def __init__(self, datalist):
+        self.datalist = datalist
+
+    def __len__(self):
+        return len(self.datalist)
+
+    def __getitem__(self, idx):
+        return self.datalist[idx]
 
 
 def train(
@@ -104,7 +151,7 @@ def train(
     seed: int = 42,
     # training hyperparams
     batch_size: int = 128,
-    num_epochs: int = 20,
+    num_epochs: int = 10,
     learning_rate: float = 1e-4,
     # lora hyperparams
     lora_r: int = 8,
@@ -115,6 +162,7 @@ def train(
         "v_proj",
     ],
     train_on_inputs: int = 0,
+    # 额外的loss参数
     tau: float = 1,
 ):
     params = locals()
@@ -137,9 +185,9 @@ def train(
     )
 
     father_path = os.path.join(
-        f"./save_lora_model/",
+        f"./save_lora_model",
         dataset_name,
-        f"sample{sample}_epoch{num_epochs}_tau{tau}",
+        f"sample{sample}_epoch{num_epochs}_CT_tau{tau}",
     )
     i = 0
     output_dir = os.path.join(father_path, str(i))
@@ -181,6 +229,16 @@ def train(
     )
     model = get_peft_model(model, config)
 
+    sep = tokenizer.encode("### Response:\n", add_special_tokens=False)  # [14711, 6075, 512]
+    titles_list = list(id2title_dict.values())
+    tokens_list = [
+        tokenizer.encode(f'"{title}"', add_special_tokens=False) + [tokenizer.eos_token_id] for title in titles_list
+    ]
+    trie = Trie()
+    for tokens in tokens_list:
+        trie.insert(tokens)
+    vocab_size = len(tokenizer)
+
     def tokenize(prompt, add_eos_token=True):
         result = tokenizer(prompt, padding=False, return_tensors=None)
         if result["input_ids"][-1] != tokenizer.eos_token_id and add_eos_token:
@@ -203,17 +261,38 @@ def train(
                 user_prompt_len:
             ]
 
+            input_ids = tokenized_full_prompt["input_ids"]
+            constrain_mask = torch.ones(size=(len(input_ids) - user_prompt_len, vocab_size), dtype=torch.bool)
+
+            response_idx_end = None
+            for i in range(len(input_ids) - len(sep), -1, -1):
+                if input_ids[i : i + len(sep)] == sep:
+                    response_idx_end = i + len(sep)
+                    break
+            if response_idx_end is None:
+                print("Response not found in input_ids")
+                return None
+
+            title_tokens = input_ids[response_idx_end:]
+
+            allowed_tokens_list = trie.valid_tokens(title_tokens)[:-1]
+            assert constrain_mask.shape[0] == len(allowed_tokens_list)
+
+            for i, allowed_tokens in enumerate(allowed_tokens_list):
+                mask = torch.zeros(vocab_size, dtype=torch.bool)
+                mask[allowed_tokens] = True
+                constrain_mask[i] = mask
+            tokenized_full_prompt["constrain_mask"] = constrain_mask
+
         return tokenized_full_prompt
 
-    train_data = Dataset.from_list(train_data)
-    train_data = train_data.shuffle(seed=seed)
-    train_data = train_data.map(lambda x: generate_and_tokenize_prompt(x))
+    train_data = [generate_and_tokenize_prompt(sample) for sample in tqdm(train_data) if sample is not None]
+    train_data = Prompt_dataset(train_data)
 
     trainer = CustomTrainer(
         model=model,
         train_dataset=train_data,
-        # eval_dataset=val_data,
-        data_collator=DataCollatorForSeq2Seq(tokenizer, pad_to_multiple_of=8, return_tensors="pt", padding=True),
+        data_collator=CustomDataCollatorForSeq2Seq(tokenizer, pad_to_multiple_of=8),
         tau=tau,
         args=transformers.TrainingArguments(
             output_dir=output_dir,
@@ -237,6 +316,7 @@ def train(
             local_rank=int(os.environ.get("LOCAL_RANK", -1)),
             seed=seed,
             data_seed=seed,
+            remove_unused_columns=False,
         ),
     )
     model.config.use_cache = False

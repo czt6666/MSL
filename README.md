@@ -12,22 +12,22 @@ This is the PyTorch implementation for our SIGIR 2025 paper.
 - [genre](https://github.com/facebookresearch/GENRE)
 
 ## Dataset
-We follow the sliding window data processing method used in [BIGRec](https://arxiv.org/abs/2308.08434). In the paper, for LLM-based recommendation, we sample 10,000 training instances (train_10000.csv) due to limitations in computational resources, while for traditional recommendation models, we use the full dataset (train.csv).
+We follow the sliding window data processing method used in [BIGRec](https://arxiv.org/abs/2308.08434). In the paper, for LLM-based recommendation, we sample 10,000 training instances (train_10000.csv) due to limitations in computational resources, while for LLM-enhanced recommendation and traditional recommendation models, we use the full dataset (train.csv).
 
 ## Training
 ### Training using Language Modeling Loss (LML)
 ```
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 accelerate launch train_tau.py --dataset_name Toy --sample 10000 --num_epochs 10 --tau 1
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 accelerate launch train_lml.py --dataset_name Toy --sample 10000 --num_epochs 10 --tau 1
 ```
 
 ### Training using Masked Softmax Loss (MSL)
 ```
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 accelerate launch train_trie_token.py --dataset_name Toy --sample 10000 --num_epochs 10 --tau 4.5
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 accelerate launch train_msl.py --dataset_name Toy --sample 10000 --num_epochs 10 --tau 4.5
 ```
 
 ### Training using Masked Softmax Loss (MSL) + Adaptive Temperature Strategy (ATS)
 ```
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 accelerate launch train_trie_token_adatau.py --dataset_name Toy --sample 10000 --num_epochs 10
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 accelerate launch train_msl_ats.py --dataset_name Toy --sample 10000 --num_epochs 10
 ```
 
 ## Inference

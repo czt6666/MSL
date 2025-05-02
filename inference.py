@@ -104,7 +104,7 @@ def main(
     sep = tokenizer.encode("### Response:\n", add_special_tokens=False)  # [14711, 6075, 512]
     titles_list = list(id2title_dict.values())
     tokens_list = [
-        tokenizer.encode(f'"{title}"', add_special_tokens=False) + [tokenizer.eos_token_id] for title in titles_list
+        tokenizer.encode("### Response:\n" + f'"{title}"', add_special_tokens=False) for title in titles_list
     ]
     trie = MarisaTrie(tokens_list)
 
