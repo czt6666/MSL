@@ -29,7 +29,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch train_msl.py --dataset_name Toy -
 CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch inference.py --lora_weights_path "xxx" --dataset Toy --constrained_before_softmax True
 ```
 
-Below are the latest results after the modification: 
+Below are the latest results after the modification of CBS: 
 | Dataset  | Method         | NDCG@5  | NDCG@10 | HIT@5   | HIT@10   |
 |----------|----------------|---------|---------|---------|----------|
 | Toy      | LML + CBS        | 0.0138  | 0.0182  | 0.0213  | 0.0353   |
