@@ -11,6 +11,7 @@ from accelerate import Accelerator
 from accelerate.utils import gather_object
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
+from customCBS_model import CustomLlamaForCausalLM
 
 from genre.trie import MarisaTrie
 import transformers
@@ -51,7 +52,9 @@ def main(
     batch_size: int = 8,
     base_model: str = "/c23034/wbh/Llama3_Checkpoints/",
     num_beams: int = 10,
-    constraint_BS: int = 1,
+    constrained_BS: int = 1,
+    # MSL should use MASK before softmax in CBS For better performance.
+    constrained_before_softmax: bool = False,
 ):
     transformers.set_seed(42)
     accelerator = Accelerator()
@@ -76,8 +79,14 @@ def main(
         input_prefix_str=history_prompt,
     )
 
-    num_sample = test_sample
-    result_json_data = f"predict_{dataset}_{num_sample}_CBS" if constraint_BS else f"predict_{dataset}_{num_sample}_BS"
+    if constrained_BS:
+        result_json_data = (
+            f"predict_{dataset}_{test_sample}_customCBS"
+            if constrained_before_softmax
+            else f"predict_{dataset}_{test_sample}_CBS"
+        )
+    else:
+        result_json_data = f"predict_{dataset}_{test_sample}_BS"
     result_json_data = os.path.join(lora_weights_path, result_json_data + ".json")
 
     if os.path.exists(result_json_data):
@@ -85,16 +94,24 @@ def main(
         return
     accelerator.wait_for_everyone()
 
-    model = AutoModelForCausalLM.from_pretrained(
-        base_model,
-        torch_dtype=torch.bfloat16,
-        device_map={"": int(os.environ.get("LOCAL_RANK") or 0)},
-    )
+    if constrained_before_softmax:
+        model = CustomLlamaForCausalLM.from_pretrained(
+            base_model,
+            torch_dtype=torch.bfloat16,
+            device_map={"": int(os.environ.get("LOCAL_RANK") or 0)},
+        )
+    else:
+        model = AutoModelForCausalLM.from_pretrained(
+            base_model,
+            torch_dtype=torch.bfloat16,
+            device_map={"": int(os.environ.get("LOCAL_RANK") or 0)},
+        )
     tokenizer = AutoTokenizer.from_pretrained(base_model)
     tokenizer.add_special_tokens({"pad_token": "<pad>"})
     model.resize_token_embeddings(len(tokenizer))
     model.config.pad_token_id = tokenizer.pad_token_id
     tokenizer.padding_side = "left"
+
     model = PeftModel.from_pretrained(model, lora_weights_path, torch_dtype=torch.bfloat16)
     model.merge_and_unload()
     model.generation_config.cache_implementation = "static"
@@ -137,7 +154,7 @@ def main(
             generation_output = model.generate(
                 **inputs,
                 generation_config=generation_config,
-                prefix_allowed_tokens_fn=prefix_allowed_tokens_fn if constraint_BS else None,
+                prefix_allowed_tokens_fn=prefix_allowed_tokens_fn if constrained_BS else None,
             )
 
             sequences_scores = generation_output.sequences_scores.tolist()
