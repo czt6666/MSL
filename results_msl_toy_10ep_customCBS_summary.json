@@ -1,0 +1,23 @@
+{
+  "dataset": "Toy",
+  "train_sample": 10000,
+  "epochs": 10,
+  "base_model": "/data/hf_cache/manual/Llama-3.1-8B-Instruct",
+  "inference": "customCBS, num_beams=10, constrained_before_softmax=true",
+  "metrics": {
+    "NDCG@1": 0.007926574885273258,
+    "NDCG@5": 0.014526451309989934,
+    "NDCG@10": 0.01837252150718476,
+    "HR@1": 0.007926574885273258,
+    "HR@5": 0.020859407592824362,
+    "HR@10": 0.03274926992073425
+  },
+  "paper_readme_target_msl_customized_cbs": {
+    "NDCG@5": 0.0253,
+    "NDCG@10": 0.0313,
+    "HIT@5": 0.0386,
+    "HIT@10": 0.0569
+  },
+  "reproduced_paper_effect": "N",
+  "reason": "Official deps and 10 epochs completed, but metrics remain below README target."
+}

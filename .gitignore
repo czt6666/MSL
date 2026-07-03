@@ -6,3 +6,28 @@ run.sh
 inf_eval.sh
 train_msl_fast.py
 inf_eval_msl.sh
+
+# Python/cache
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Environments
+.venv/
+venv/
+.env
+
+# Experiment outputs
+logs/
+*.log
+baseline_results/
+data/Toy_eval100/
+runs/
+wandb/
+
+# Large model/checkpoint artifacts
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.safetensors

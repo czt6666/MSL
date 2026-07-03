@@ -1,5 +1,9 @@
 import math
-import fire
+try:
+    import fire
+except ImportError:
+    fire = None
+import argparse
 import numpy as np
 import os
 import json
@@ -109,4 +113,9 @@ def main(lora_weights_father_path: str):
 
 
 if __name__ == "__main__":
-    fire.Fire(main)
+    if fire is not None:
+        fire.Fire(main)
+    else:
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--lora_weights_father_path", required=True)
+        main(**vars(parser.parse_args()))

@@ -1,6 +1,10 @@
 import ast
 import pandas as pd
-import fire
+try:
+    import fire
+except ImportError:
+    fire = None
+import argparse
 import torch
 
 import json
@@ -13,7 +17,20 @@ from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
 from customCBS_model import CustomLlamaForCausalLM
 
-from genre.trie import MarisaTrie
+try:
+    from genre.trie import MarisaTrie
+except ImportError:
+    class MarisaTrie:
+        def __init__(self, sequences):
+            self.sequences = [list(seq) for seq in sequences]
+
+        def get(self, prefix):
+            prefix = list(prefix)
+            allowed = set()
+            for seq in self.sequences:
+                if len(seq) > len(prefix) and seq[: len(prefix)] == prefix:
+                    allowed.add(seq[len(prefix)])
+            return sorted(allowed)
 import transformers
 from utils import get_prompt
 
@@ -61,13 +78,13 @@ def main(
     accelerator.print("Dataset: ", dataset)
     accelerator.print("LoRA Weights Path: ", lora_weights_path)
 
-    data_path = os.path.join("/c23034/wbh/code/CBS_LLM4Rec/data/", dataset)
+    data_path = os.path.join("./data/", dataset)
     test_data_path = os.path.join(data_path, f"test_{test_sample}.csv")
     accelerator.print("test_data_path: ", test_data_path)
 
     instruction_prompt, history_prompt = get_prompt(dataset)
 
-    id2title_path = os.path.join("/c23034/wbh/code/CBS_LLM4Rec/data/", dataset, "id2name4Rec.json")
+    id2title_path = os.path.join("./data/", dataset, "id2name4Rec.json")
     with open(id2title_path, "r") as file:
         data = json.load(file)
     id2title_dict = {int(k): v for k, v in data.items()}
@@ -113,9 +130,7 @@ def main(
     tokenizer.padding_side = "left"
 
     model = PeftModel.from_pretrained(model, lora_weights_path, torch_dtype=torch.bfloat16)
-    model.merge_and_unload()
-    model.generation_config.cache_implementation = "static"
-    model = torch.compile(model, mode="reduce-overhead", fullgraph=True)
+    model = model.merge_and_unload()
     model.eval()
 
     sep = tokenizer.encode("### Response:\n", add_special_tokens=False)  # [14711, 6075, 512]
@@ -228,4 +243,16 @@ def generate_prompt(instruction, input=None):
 
 
 if __name__ == "__main__":
-    fire.Fire(main)
+    if fire is not None:
+        fire.Fire(main)
+    else:
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--lora_weights_path", required=True)
+        parser.add_argument("--dataset", required=True)
+        parser.add_argument("--test_sample", type=int, default=5000)
+        parser.add_argument("--batch_size", type=int, default=8)
+        parser.add_argument("--base_model", default="/c23034/wbh/Llama3_Checkpoints/")
+        parser.add_argument("--num_beams", type=int, default=10)
+        parser.add_argument("--constrained_BS", type=lambda x: str(x).lower() in {"1", "true", "yes"}, default=True)
+        parser.add_argument("--constrained_before_softmax", type=lambda x: str(x).lower() in {"1", "true", "yes"}, default=False)
+        main(**vars(parser.parse_args()))

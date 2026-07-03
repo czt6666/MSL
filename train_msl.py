@@ -7,7 +7,11 @@ import re
 import time
 from typing import List, Optional
 
-import fire
+try:
+    import fire
+except ImportError:
+    fire = None
+import argparse
 import numpy as np
 import pandas as pd
 import torch
@@ -157,6 +161,7 @@ def train(
     lora_r: int = 8,
     lora_alpha: int = 16,
     lora_dropout: float = 0.05,
+    load_in_8bit: bool = True,
     lora_target_modules: List[str] = [
         "q_proj",
         "v_proj",
@@ -205,12 +210,16 @@ def train(
     micro_batch_size = batch_size // world_size
     gradient_accumulation_steps = batch_size // micro_batch_size // world_size
 
-    bnb_config = BitsAndBytesConfig(load_in_8bit=True)
+    model_kwargs = {
+        "torch_dtype": torch.bfloat16,
+        "device_map": {"": int(os.environ.get("LOCAL_RANK") or 0)},
+    }
+    if load_in_8bit:
+        bnb_config = BitsAndBytesConfig(load_in_8bit=True)
+        model_kwargs["quantization_config"] = bnb_config
     model = AutoModelForCausalLM.from_pretrained(
         base_model,
-        quantization_config=bnb_config,
-        torch_dtype=torch.bfloat16,
-        device_map={"": int(os.environ.get("LOCAL_RANK") or 0)},
+        **model_kwargs,
     )
     tokenizer = AutoTokenizer.from_pretrained(base_model)
     tokenizer.add_special_tokens({"pad_token": "<pad>"})
@@ -218,7 +227,10 @@ def train(
     model.config.pad_token_id = tokenizer.pad_token_id
     tokenizer.padding_side = "left"
 
-    model = prepare_model_for_kbit_training(model)
+    if load_in_8bit:
+        model = prepare_model_for_kbit_training(model)
+    else:
+        model.enable_input_require_grads()
     config = LoraConfig(
         r=lora_r,
         lora_alpha=lora_alpha,
@@ -312,7 +324,7 @@ def train(
             save_on_each_node=False,
             log_on_each_node=False,
             ddp_find_unused_parameters=False if (world_size != 1) else None,
-            report_to="tensorboard",
+            report_to="none",
             local_rank=int(os.environ.get("LOCAL_RANK", -1)),
             seed=seed,
             data_seed=seed,
@@ -347,4 +359,21 @@ def generate_prompt(data_point):
 
 
 if __name__ == "__main__":
-    fire.Fire(train)
+    if fire is not None:
+        fire.Fire(train)
+    else:
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--dataset_name", required=True)
+        parser.add_argument("--base_model", default="/c23034/wbh/Llama3_Checkpoints/")
+        parser.add_argument("--sample", type=int, default=-1)
+        parser.add_argument("--seed", type=int, default=42)
+        parser.add_argument("--batch_size", type=int, default=128)
+        parser.add_argument("--num_epochs", type=int, default=10)
+        parser.add_argument("--learning_rate", type=float, default=1e-4)
+        parser.add_argument("--lora_r", type=int, default=8)
+        parser.add_argument("--lora_alpha", type=int, default=16)
+        parser.add_argument("--lora_dropout", type=float, default=0.05)
+        parser.add_argument("--load_in_8bit", type=lambda x: str(x).lower() in {"1", "true", "yes"}, default=True)
+        parser.add_argument("--train_on_inputs", type=int, default=0)
+        parser.add_argument("--tau", type=float, default=1)
+        train(**vars(parser.parse_args()))
